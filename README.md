@@ -23,7 +23,7 @@ A Discord bot for monitoring Minecraft servers.
    - `ALERT_CHANNEL_ID` is optional - it's the Discord channel ID where auto-alerts will be sent
    - To get a channel ID: Enable Developer Mode in Discord → Right-click channel → Copy Channel ID
    
-3. Run the setup script:
+3. Run the setup script (windows):
    ```powershell
    .\setup.ps1
    ```
@@ -37,7 +37,7 @@ A Discord bot for monitoring Minecraft servers.
 - `mc-info:autocheck on/off` - Enable or disable automatic server monitoring
 - `mc-info:hello` - Get a greeting
 
-## Running the Bot
+## Running the Bot (windows)
 
 Simply run:
 ```powershell
