@@ -248,18 +248,17 @@ class DiscordBot:
                     # Server came back online
                     embed = discord.Embed(
                         title="✅ Server is Back Online!",
-                        description=f"The Minecraft server at  is now online.",
+                        description="The Minecraft server is now online.",
                         color=discord.Color.green(),
                         timestamp=datetime.now()
                     )
                     embed.set_image(url=self.server_up_gif)
-                    
-                    await channel.send("", embed=embed)
+                    await channel.send(content=None, embed=embed)
                 else:
                     # Server went down
                     embed = discord.Embed(
                         title="❌ Server Went Offline",
-                        description=f"The Minecraft server  is no longer responding.",
+                        description="The Minecraft server is no longer responding.",
                         color=discord.Color.red(),
                         timestamp=datetime.now()
                     )
@@ -299,7 +298,8 @@ class DiscordBot:
                 color=discord.Color.red()
             )
         embed.set_image(url=self.server_down_gif)
-        await og_message.edit(content=None, embed=embed)
+        ping_msg = f"<@{self.ping_user_id}>" if self.ping_user_id else None
+        await og_message.edit(content=ping_msg, embed=embed)
 
 
     def run(self):
