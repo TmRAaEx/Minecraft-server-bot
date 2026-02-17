@@ -25,7 +25,7 @@ A Discord bot for monitoring Minecraft servers.
    - `PING_USER_ID` is optional - the Discord user ID to ping when server status changes
    - To get IDs: Enable Developer Mode in Discord → Right-click channel/user → Copy ID
    
-3. Run the setup script:
+3. Run the setup script (windows):
    ```powershell
    .\setup.ps1
    ```
@@ -39,7 +39,7 @@ A Discord bot for monitoring Minecraft servers.
 - `mc-info:autocheck on/off` - Enable or disable automatic server monitoring
 - `mc-info:hello` - Get a greeting
 
-## Running the Bot
+## Running the Bot (windows)
 
 Simply run:
 ```powershell
@@ -74,6 +74,6 @@ Enable these privileged intents for your bot:
 - Playtime tracking starts when the bot is running and players are checked
 - Player data is stored in `player_data.json` (auto-created)
 - Some servers hide player lists - in that case only player count is shown
-- Auto-alerts check the server every 2 minutes and notify when status changes
+- Auto-alerts check the server every 10 minutes and notify when status changes
 - If `ALERT_CHANNEL_ID` is set in `.env`, auto-alerts start automatically when the bot starts
 - You can toggle auto-alerts on/off with `mc-info:autocheck on/off`
