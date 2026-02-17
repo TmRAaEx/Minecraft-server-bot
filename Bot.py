@@ -13,6 +13,7 @@ class DiscordBot:
         self.token = getenv("BOT_TOKEN")
         self.server_ip = getenv("SERVER_IP")
         self.alert_channel_id = getenv("ALERT_CHANNEL_ID")  # Optional: channel to send alerts
+        self.ping_user_id = getenv("PING_USER_ID")  # Optional: user ID to ping on alerts
         intents = discord.Intents.all()
         self.client = discord.Client(intents=intents)
         # Use a direct GIF URL (this one works with Discord embeds)
@@ -252,7 +253,8 @@ class DiscordBot:
                         timestamp=datetime.now()
                     )
                     embed.set_image(url=self.server_up_gif)
-                    await channel.send("<@463058919334608927>", embed=embed)
+                    
+                    await channel.send("", embed=embed)
                 else:
                     # Server went down
                     embed = discord.Embed(
@@ -262,7 +264,8 @@ class DiscordBot:
                         timestamp=datetime.now()
                     )
                     embed.set_image(url=self.server_down_gif)
-                    await channel.send("<@463058919334608927>", embed=embed)
+                    ping_msg = f"<@{self.ping_user_id}>" if self.ping_user_id else ""
+                    await channel.send(ping_msg, embed=embed)
             
             self.last_server_status = server_is_up
             
@@ -292,7 +295,7 @@ class DiscordBot:
     async def __server_down__(self, og_message):
         embed = discord.Embed(
                 title="MC Server Not Responding",
-                description="The server is currently offline or unreachable. <@463058919334608927>",
+                description="The server is currently offline or unreachable.",
                 color=discord.Color.red()
             )
         embed.set_image(url=self.server_down_gif)
