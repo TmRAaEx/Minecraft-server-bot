@@ -248,7 +248,7 @@ class DiscordBot:
                     # Server came back online
                     embed = discord.Embed(
                         title="✅ Server is Back Online!",
-                        description=f"The Minecraft server at `{self.server_ip}` is now online.",
+                        description=f"The Minecraft server at  is now online.",
                         color=discord.Color.green(),
                         timestamp=datetime.now()
                     )
@@ -259,7 +259,7 @@ class DiscordBot:
                     # Server went down
                     embed = discord.Embed(
                         title="❌ Server Went Offline",
-                        description=f"The Minecraft server at `{self.server_ip}` is no longer responding.",
+                        description=f"The Minecraft server  is no longer responding.",
                         color=discord.Color.red(),
                         timestamp=datetime.now()
                     )
