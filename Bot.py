@@ -253,7 +253,8 @@ class DiscordBot:
                         timestamp=datetime.now()
                     )
                     embed.set_image(url=self.server_up_gif)
-                    await channel.send(content=None, embed=embed)
+                    #dont ping when online
+                    await channel.send(ping_msg, embed=embed)
                 else:
                     # Server went down
                     embed = discord.Embed(
