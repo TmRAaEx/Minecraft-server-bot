@@ -43,14 +43,17 @@ A Discord bot for monitoring Minecraft servers.
 
 Simply run:
 ```powershell
+## Running the Bot (windows)
+
+Simply run:
+```powershell
+.\.venv\Scripts\python.exe run.py
+```
+
+Or using the helper script:
+```powershell
 .\run.ps1
 ```
-
-Or manually:
-```powershell
-.\.venv\Scripts\python.exe main.py
-```
-
 ## Discord Developer Portal Setup
 
 Enable these privileged intents for your bot:

@@ -1,307 +1,248 @@
 import discord
-from discord.ext import tasks
-from os import getenv
-from dotenv import load_dotenv
-from mcstatus import JavaServer
-import json
+from discord.ext import commands, tasks
 from datetime import datetime
-import os
+from services.minecraft import MinecraftService
+from config import *
+
+from services.player_tracker import PlayerTracker  # your new tracker class
 
 class DiscordBot:
     def __init__(self):
-        load_dotenv()
-        self.token = getenv("BOT_TOKEN")
-        self.server_ip = getenv("SERVER_IP")
-        self.alert_channel_id = getenv("ALERT_CHANNEL_ID")  # Optional: channel to send alerts
-        self.ping_user_id = getenv("PING_USER_ID")  # Optional: user ID to ping on alerts
         intents = discord.Intents.all()
-        self.client = discord.Client(intents=intents)
-        # Use a direct GIF URL (this one works with Discord embeds)
-        self.server_down_gif = "https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExMzkwbnJobDF6MnE5M2F6ZzdxNTN5dXl3Znh5dzN2b2c0czI1c3dwYyZlcD12MV9naWZzX3NlYXJjaCZjdD1n/bC8EUWeuy5OIx6o7ul/giphy.gif"
-        self.server_up_gif = "https://media.giphy.com/media/3o7abGQa0aRJUurpII/giphy.gif"
-        # Initialize mcstatus
-        self.mc_server = JavaServer.lookup(self.server_ip)
-        # Player tracking file
-        self.player_data_file = "player_data.json"
-        self.player_data = self._load_player_data()
-        # Server status tracking
-        self.last_server_status = None  # None = unknown, True = up, False = down
-        self.auto_check_enabled = False
-        
-        # Register event handlers
-        self.client.event(self.on_ready)
-        self.client.event(self.on_message)
-        
-        # Setup background task
-        self.check_server_task = tasks.loop(minutes=10)(self._check_server_status)
 
-    async def on_ready(self):
-        server_count = 0
-        
-        for server in self.client.guilds:
-            print(f"-{server.id} (name: {server.name})")
-            server_count += 1
-        
-        print(f"Bot is in {server_count} servers")
-        
-        # Start auto-checking if alert channel is configured
-        if self.alert_channel_id and not self.check_server_task.is_running():
-            self.check_server_task.start()
-            print(f"Auto-check started for alerts in channel {self.alert_channel_id}")
-    
-    async def on_message(self, message: discord.Message):
-        # Don't respond to own messages
-        if message.author == self.client.user:
-            return
-        
-        # Check for prefix
-        prefix = "mc-info:"
-        if not message.content.lower().startswith(prefix):
-            return
-        
-        # Extract command after prefix
-        command = message.content[len(prefix):].strip().lower()
-        channel = message.channel
-        
-        if command == "help":
+        self.bot = commands.Bot(
+            command_prefix="mc-info:",
+            intents=intents,
+            help_command=None
+        )
+
+        # Services
+        self.minecraft = MinecraftService(SERVER_IP)
+        self.tracker = PlayerTracker("player_data.json")
+
+        # Monitoring
+        self.last_server_status = None
+        self.last_online_players = set()
+        self.server_down_gif = "https://media.giphy.com/media/bC8EUWeuy5OIx6o7ul/giphy.gif"
+        self.server_up_gif = "https://media.giphy.com/media/3o7abGQa0aRJUurpII/giphy.gif"
+
+        # Register events & commands
+        self._register_events()
+        self._register_commands()
+
+    # ---------------- EVENTS ---------------- #
+    def _register_events(self):
+        @self.bot.event
+        async def on_ready():
+            print(f"Logged in as {self.bot.user}")
+            print(f"Bot is in {len(self.bot.guilds)} servers")
+            if not self.monitor_task.is_running():
+                self.monitor_task.start()
+
+    # ---------------- COMMANDS ---------------- #
+    def _register_commands(self):
+        @self.bot.command()
+        async def hello(ctx):
+            await ctx.send("Hey dirtbag")
+
+        @self.bot.command()
+        async def help(ctx):
             help_message = (
                 "**Available Commands:**\n"
                 "`mc-info:hello` - Get a greeting\n"
                 "`mc-info:status` - Check Minecraft server status\n"
-                "`mc-info:players` - Show current players online\n"
-                "`mc-info:playtime` - Show player playtime stats\n"
-                "`mc-info:autocheck on/off` - Enable/disable auto-alerts (requires ALERT_CHANNEL_ID in .env)\n"
-                "`mc-info:help` - Show this message"
+                "`mc-info:players` - Show current players\n"
+                "`mc-info:playtime` - Show players' playtime\n"
+                "`mc-info:autocheck on/off` - Enable/disable auto-alert"
             )
-            await channel.send(help_message)
-        
-        elif command == "hello":
-            await channel.send("Hey dirtbag")
-        
-        elif command == "status":
-            await self.__server_status(channel)   
+            await ctx.send(help_message)
 
-        elif command == "players":
-            await self.__show_players(channel)
-            
-        elif command == "playtime":
-            await self.__show_playtime(channel)
-            
-        elif command.startswith("autocheck"):
-            args = command.split()
-            if len(args) > 1:
-                if args[1] == "on":
-                    await self.__enable_autocheck(channel)
-                elif args[1] == "off":
-                    await self.__disable_autocheck(channel)
-            else:
-                status = "enabled" if self.check_server_task.is_running() else "disabled"
-                await channel.send(f"Auto-check is currently **{status}**")         
-        
-    async def __server_status(self, channel):
-        status_msg = await channel.send("Checking server status...")
-        try:
-            status = self.mc_server.status()
-            await status_msg.edit(content=f"Server status ok: \nserver responded in {status.latency}ms")
-        except TimeoutError:
-            await self.__server_down__(status_msg)
+        @self.bot.command()
+        async def status(ctx):
+            msg = await ctx.send("Checking server status...")
+            status = await self.safe_minecraft_call(ctx, self.minecraft.get_status, message=msg)
+            if not status:
+                return  # safe_minecraft_call already handled errors
 
-    async def __show_players(self, channel):
-        player_msg = await channel.send("Checking online players...")
-        try:
-            status = self.mc_server.status()
-            player_count = status.players.online
+            latency = round(status.latency)
+            motd = status.description
+            if isinstance(motd, dict):
+                motd = motd.get("text", "Unknown")
+            online = status.players.online
             max_players = status.players.max
-            
-            # Update player tracking
-            self._update_player_tracking(status)
-            
+
+            embed = discord.Embed(
+                title="✅ Server Online",
+                description=f"Responded in {latency}ms",
+                color=discord.Color.green(),
+                timestamp=datetime.now()
+            )
+            embed.add_field(name="📜 MOTD", value=motd, inline=False)
+            embed.add_field(name="👥 Players", value=f"{online}/{max_players}", inline=True)
+            await msg.edit(content=None, embed=embed)
+
+        @self.bot.command()
+        async def players(ctx):
+            msg = await ctx.send("Fetching players...")
+            status = await self.safe_minecraft_call(ctx, self.minecraft.get_status, message=msg)
+            if not status:
+                return
+
+            self.tracker.update(status)
+            online = status.players.online
+            max_players = status.players.max
+
             embed = discord.Embed(
                 title="🎮 Players Online",
-                description=f"**{player_count}/{max_players}** players online",
+                description=f"{online}/{max_players} players",
                 color=discord.Color.green()
             )
-            
+
             if status.players.sample:
-                player_list = "\n".join([f"• {player.name}" for player in status.players.sample])
-                embed.add_field(name="Currently Playing:", value=player_list, inline=False)
-            elif player_count > 0:
-                embed.add_field(name="Note:", value="Player list hidden by server settings", inline=False)
+                embed.add_field(
+                    name="Currently Playing",
+                    value="\n".join(f"• {p.name}" for p in status.players.sample),
+                    inline=False
+                )
             else:
-                embed.add_field(name="Status:", value="No players online", inline=False)
-            
-            await player_msg.edit(content=None, embed=embed)
-        except TimeoutError: 
-            await self.__server_down__(player_msg)
-    
-    async def __show_playtime(self, channel):
-        playtime_msg = await channel.send("Fetching playtime data...")
-        
-        if not self.player_data:
-            await playtime_msg.edit(content="No playtime data available yet. The bot tracks players as it sees them online.")
-            return
-        
-        embed = discord.Embed(
-            title="⏱️ Player Playtime Stats",
-            description="Tracked time players have been online",
-            color=discord.Color.blue()
-        )
-        
-        # Sort by total time
-        sorted_players = sorted(
-            self.player_data.items(),
-            key=lambda x: x[1].get("total_time", 0),
-            reverse=True
-        )[:10]  # Top 10 players
-        
-        if sorted_players:
-            playtime_list = []
-            for player_name, data in sorted_players:
-                total_seconds = data.get("total_time", 0)
-                hours = total_seconds // 3600
-                minutes = (total_seconds % 3600) // 60
-                
-                if hours > 0:
-                    time_str = f"{hours}h {minutes}m"
-                else:
-                    time_str = f"{minutes}m"
-                
-                playtime_list.append(f"• **{player_name}**: {time_str}")
-            
-            embed.add_field(name="Top Players:", value="\n".join(playtime_list), inline=False)
-        else:
-            embed.add_field(name="Status:", value="No playtime data available", inline=False)
-        
-        await playtime_msg.edit(content=None, embed=embed)
-    
-    def _load_player_data(self):
-        """Load player tracking data from file"""
-        if os.path.exists(self.player_data_file):
-            with open(self.player_data_file, 'r') as f:
-                return json.load(f)
-        return {}
-    
-    def _save_player_data(self):
-        """Save player tracking data to file"""
-        with open(self.player_data_file, 'w') as f:
-            json.dump(self.player_data, f, indent=2)
-    
-    def _update_player_tracking(self, status):
-        """Update player session times"""
-        current_time = datetime.now().timestamp()
-        current_players = set()
-        
-        if status.players.sample:
-            current_players = {player.name for player in status.players.sample}
-        
-        # Update currently online players
-        for player_name in current_players:
-            if player_name not in self.player_data:
-                self.player_data[player_name] = {
-                    "total_time": 0,
-                    "session_start": current_time,
-                    "last_seen": current_time
-                }
-            else:
-                # If they were offline, start new session
-                if "session_start" not in self.player_data[player_name]:
-                    self.player_data[player_name]["session_start"] = current_time
-                else:
-                    # Add time since last check
-                    last_seen = self.player_data[player_name].get("last_seen", current_time)
-                    time_diff = current_time - last_seen
-                    # Only add time if check was recent (within 5 minutes)
-                    if time_diff < 300:
-                        self.player_data[player_name]["total_time"] += time_diff
-                
-                self.player_data[player_name]["last_seen"] = current_time
-        
-        # Mark offline players
-        for player_name in self.player_data:
-            if player_name not in current_players and "session_start" in self.player_data[player_name]:
-                # End session
-                del self.player_data[player_name]["session_start"]
-        
-        self._save_player_data()
-    
-    async def _check_server_status(self):
-        """Background task to check server status and send alerts"""
-        if not self.alert_channel_id:
-            return
-        
-        try:
-            channel = self.client.get_channel(int(self.alert_channel_id))
-            if not channel:
-                print(f"Alert channel {self.alert_channel_id} not found")
+                embed.add_field(name="Status", value="No visible players")
+
+            await msg.edit(content=None, embed=embed)
+
+        @self.bot.command()
+        async def playtime(ctx):
+            top = self.tracker.top_players()
+            if not top:
+                await ctx.send("No playtime data yet.")
                 return
-            
-            try:
-                # Try to ping the server
-                latency = self.mc_server.ping()
-                server_is_up = True
-            except (TimeoutError, Exception):
-                server_is_up = False
-            
-            # Check if status changed
-            if self.last_server_status is not None and self.last_server_status != server_is_up:
-                if server_is_up:
-                    # Server came back online
-                    embed = discord.Embed(
-                        title="✅ Server is Back Online!",
-                        description="The Minecraft server is now online.",
-                        color=discord.Color.green(),
-                        timestamp=datetime.now()
-                    )
-                    embed.set_image(url=self.server_up_gif)
-                    #dont ping when online
-                    await channel.send(ping_msg, embed=embed)
-                else:
-                    # Server went down
-                    embed = discord.Embed(
-                        title="❌ Server Went Offline",
-                        description="The Minecraft server is no longer responding.",
-                        color=discord.Color.red(),
-                        timestamp=datetime.now()
-                    )
-                    embed.set_image(url=self.server_down_gif)
-                    ping_msg = f"<@{self.ping_user_id}>" if self.ping_user_id else ""
-                    await channel.send(ping_msg, embed=embed)
-            
-            self.last_server_status = server_is_up
-            
-        except Exception as e:
-            print(f"Error in auto-check: {e}")
-    
-    async def __enable_autocheck(self, channel):
-        """Enable auto-checking"""
-        if not self.alert_channel_id:
-            await channel.send("⚠️ Auto-check requires `ALERT_CHANNEL_ID` to be set in your `.env` file.")
-            return
-        
-        if not self.check_server_task.is_running():
-            self.check_server_task.start()
-            await channel.send(f"✅ Auto-check enabled! Alerts will be sent to <#{self.alert_channel_id}>")
-        else:
-            await channel.send("Auto-check is already running.")
-    
-    async def __disable_autocheck(self, channel):
-        """Disable auto-checking"""
-        if self.check_server_task.is_running():
-            self.check_server_task.cancel()
-            await channel.send("❌ Auto-check disabled.")
-        else:
-            await channel.send("Auto-check is not running.")
 
-    async def __server_down__(self, og_message):
-        embed = discord.Embed(
-                title="MC Server Not Responding",
-                description="The server is currently offline or unreachable.",
-                color=discord.Color.red()
+            embed = discord.Embed(
+                title="⏱ Player Playtime",
+                color=discord.Color.blue()
             )
+
+            lines = []
+            for name, data in top:
+                total = data.get("total_time", 0)
+                hours = total // 3600
+                minutes = (total % 3600) // 60
+
+                # Show current session if present
+                current_session = data.get("current_session", None)
+                if current_session:
+                    c_hours = current_session // 3600
+                    c_minutes = (current_session % 3600) // 60
+                    session_str = f" (Current: {c_hours}h {c_minutes}m)"
+                else:
+                    session_str = ""
+
+                lines.append(f"• **{name}**: {hours}h {minutes}m{session_str}")
+
+            embed.add_field(name="Top Players", value="\n".join(lines), inline=False)
+            await ctx.send(embed=embed)
+
+    # ---------------- MONITOR ---------------- #
+    @tasks.loop(minutes=10)
+    async def monitor_task(self):
+        if not ALERT_CHANNEL_ID:
+            return
+
+        channel = self.bot.get_channel(int(ALERT_CHANNEL_ID))
+        if not channel:
+            return
+
+        try:
+            status = self.minecraft.get_status()
+            server_is_up = True
+
+            # Collect current players
+            current_players = set()
+            if status.players.sample:
+                current_players = {p.name for p in status.players.sample}
+
+        except Exception:
+            server_is_up = False
+            current_players = set()
+
+        # ---------------- SERVER STATUS ALERT ---------------- #
+        if self.last_server_status is not None and self.last_server_status != server_is_up:
+            if server_is_up:
+                embed = discord.Embed(
+                    title="Server Back Online!",
+                    color=discord.Color.green(),
+                    timestamp=datetime.now()
+                )
+                embed.set_image(url=self.server_up_gif)
+                await channel.send(embed=embed)
+            else:
+                embed = discord.Embed(
+                    title="Server Went Offline",
+                    color=discord.Color.red(),
+                    timestamp=datetime.now()
+                )
+                embed.set_image(url=self.server_down_gif)
+                ping_msg = f"<@{PING_USER_ID}>" if PING_USER_ID else ""
+                await channel.send(ping_msg, embed=embed)
+
+        # ---------------- NEW PLAYER ALERT ---------------- #
+        if server_is_up:
+            new_players = current_players - self.last_online_players
+
+            if new_players:
+                embed = discord.Embed(
+                    title="🎉 Player Joined!",
+                    description="\n".join(f"• {name}" for name in new_players),
+                    color=discord.Color.blue(),
+                    timestamp=datetime.now()
+                )
+                await channel.send(embed=embed)
+
+            # Update tracker for playtime
+            self.tracker.update(status)
+
+            # Save current set for next comparison
+            self.last_online_players = current_players
+
+        else:
+            # If server is down, reset player list
+            self.last_online_players = set()
+
+        self.last_server_status = server_is_up
+
+    # ---------------- HELPERS ---------------- #
+    async def _server_down(self, message):
+        embed = discord.Embed(
+            title="Server Not Responding",
+            color=discord.Color.red()
+        )
         embed.set_image(url=self.server_down_gif)
-        ping_msg = f"<@{self.ping_user_id}>" if self.ping_user_id else None
-        await og_message.edit(content=ping_msg, embed=embed)
+        await message.edit(content=None, embed=embed)
+
+    async def safe_minecraft_call(self, ctx, func, *args, message=None, **kwargs):
+        """
+        Calls a MinecraftService method safely.
+        
+        Parameters:
+        - ctx: the command context
+        - func: function to call
+        - message: optional discord.Message to edit on failure
+        - args/kwargs: passed to func
+        """
+        try:
+            return func(*args, **kwargs)
+        except TimeoutError:
+            if message:
+                await self._server_down(message)
+            else:
+                # fallback if no message to edit
+                await ctx.send("❌ Server not responding.")
+            return None
+        except Exception as e:
+            # catch-all for unexpected errors
+            await ctx.send(f"❌ An error occurred: {e}")
+            return None
 
 
+    # ---------------- RUN ---------------- #
     def run(self):
-        self.client.run(self.token)
+        self.bot.run(BOT_TOKEN)
